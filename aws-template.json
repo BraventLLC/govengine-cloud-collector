@@ -1,0 +1,548 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "GovEngine read-only AWS collector scheduled on ECS Fargate.",
+  "Metadata": {
+    "AWS::CloudFormation::Interface": {
+      "ParameterGroups": [
+        {
+          "Label": {
+            "default": "Collector configuration"
+          },
+          "Parameters": [
+            "DisplayName",
+            "GovEngineUrl",
+            "GovEngineAudience",
+            "ScheduleExpression"
+          ]
+        }
+      ],
+      "ParameterLabels": {
+        "DisplayName": {
+          "default": "Connection display name"
+        },
+        "GovEngineUrl": {
+          "default": "GovEngine URL"
+        },
+        "GovEngineAudience": {
+          "default": "GovEngine identity audience"
+        },
+        "ScheduleExpression": {
+          "default": "Collection schedule"
+        }
+      }
+    }
+  },
+  "Parameters": {
+    "DisplayName": {
+      "Type": "String",
+      "Default": "AWS Production",
+      "MinLength": 1,
+      "MaxLength": 128,
+      "AllowedPattern": "^[A-Za-z0-9][A-Za-z0-9 ._:/()-]{0,127}$",
+      "ConstraintDescription": "Use letters, numbers, spaces, and simple punctuation only."
+    },
+    "GovEngineUrl": {
+      "Type": "String",
+      "Default": "https://govengine.ai",
+      "MaxLength": 2048,
+      "AllowedPattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::[1-9][0-9]{0,4})?/?$",
+      "ConstraintDescription": "Enter a credential-free HTTPS origin with no path, query, or fragment."
+    },
+    "GovEngineAudience": {
+      "Type": "String",
+      "Default": "https://govengine.ai/cloud-collector",
+      "MaxLength": 2048,
+      "AllowedPattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::[1-9][0-9]{0,4})?(?:/[A-Za-z0-9._~/-]*)?$",
+      "ConstraintDescription": "Enter the credential-free HTTPS audience configured as CLOUD_IDENTITY_AUDIENCE."
+    },
+    "ScheduleExpression": {
+      "Type": "String",
+      "Default": "rate(1 hour)"
+    }
+  },
+  "Resources": {
+    "CollectorVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.42.0.0/24",
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-collector"
+            }
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway"
+    },
+    "VpcGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        },
+        "VpcId": {
+          "Ref": "CollectorVpc"
+        }
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": "10.42.0.0/28",
+        "MapPublicIpOnLaunch": false,
+        "VpcId": {
+          "Ref": "CollectorVpc"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "${AWS::StackName}-collector"
+            }
+          }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "CollectorVpc"
+        }
+      }
+    },
+    "DefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "VpcGatewayAttachment",
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "SubnetRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        }
+      }
+    },
+    "CollectorSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "GovEngine collector outbound HTTPS only",
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Cloud APIs, public image registry, and GovEngine"
+          }
+        ],
+        "VpcId": {
+          "Ref": "CollectorVpc"
+        }
+      }
+    },
+    "CollectorCluster": {
+      "Type": "AWS::ECS::Cluster"
+    },
+    "CollectorLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": {
+          "Fn::Sub": "/govengine/cloud-collector/${AWS::StackName}"
+        },
+        "RetentionInDays": 30
+      }
+    },
+    "CollectorTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                },
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "collector-read",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "Inventory",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeInstanceTypes",
+                    "ec2:DescribeVolumes"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "Utilization",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:GetMetricData",
+                    "cloudwatch:ListMetrics"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "Billing",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ce:GetCostAndUsageWithResources"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "Recommendations",
+                  "Effect": "Allow",
+                  "Action": [
+                    "compute-optimizer:GetEC2InstanceRecommendations"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "IdentityProof",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sts:GetCallerIdentity"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "TaskExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                },
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "collector-logs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CollectorLogGroup",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CollectorTaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {
+          "Fn::Sub": "${AWS::StackName}-collector"
+        },
+        "Cpu": "256",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "CollectorTaskRole",
+            "Arn"
+          ]
+        },
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "TaskExecutionRole",
+            "Arn"
+          ]
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "govengine-collector",
+            "Image": "ghcr.io/braventllc/govengine-collector@sha256:3af66a69d92683f1b018ab30f6f5c0ec72b2064b919f4d260e07a2725b30f751",
+            "Essential": true,
+            "User": "65532",
+            "ReadonlyRootFilesystem": true,
+            "Command": [
+              "--once"
+            ],
+            "Environment": [
+              {
+                "Name": "GOVENGINE_URL",
+                "Value": {
+                  "Ref": "GovEngineUrl"
+                }
+              },
+              {
+                "Name": "GOVENGINE_AUDIENCE",
+                "Value": {
+                  "Ref": "GovEngineAudience"
+                }
+              },
+              {
+                "Name": "GOVENGINE_CLOUD_PROVIDER",
+                "Value": "aws"
+              },
+              {
+                "Name": "AWS_ACCOUNT_ID",
+                "Value": {
+                  "Ref": "AWS::AccountId"
+                }
+              },
+              {
+                "Name": "AWS_REGIONS",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "CollectorLogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "collector"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "SchedulerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "scheduler.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  },
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule-group/default"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "collector-schedule",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:RunTask",
+                  "Resource": {
+                    "Ref": "CollectorTaskDefinition"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": {
+                        "Fn::GetAtt": [
+                          "CollectorCluster",
+                          "Arn"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "CollectorTaskRole",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "TaskExecutionRole",
+                        "Arn"
+                      ]
+                    }
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "CollectorSchedule": {
+      "Type": "AWS::Scheduler::Schedule",
+      "DependsOn": "DefaultRoute",
+      "Properties": {
+        "Description": "Runs the GovEngine collector once per schedule.",
+        "FlexibleTimeWindow": {
+          "Mode": "OFF"
+        },
+        "GroupName": "default",
+        "ScheduleExpression": {
+          "Ref": "ScheduleExpression"
+        },
+        "State": "ENABLED",
+        "Target": {
+          "Arn": {
+            "Fn::GetAtt": [
+              "CollectorCluster",
+              "Arn"
+            ]
+          },
+          "RoleArn": {
+            "Fn::GetAtt": [
+              "SchedulerRole",
+              "Arn"
+            ]
+          },
+          "EcsParameters": {
+            "LaunchType": "FARGATE",
+            "TaskCount": 1,
+            "TaskDefinitionArn": {
+              "Ref": "CollectorTaskDefinition"
+            },
+            "NetworkConfiguration": {
+              "AwsvpcConfiguration": {
+                "AssignPublicIp": "ENABLED",
+                "SecurityGroups": [
+                  {
+                    "Fn::GetAtt": [
+                      "CollectorSecurityGroup",
+                      "GroupId"
+                    ]
+                  }
+                ],
+                "Subnets": [
+                  {
+                    "Ref": "PublicSubnet"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "RegistrationManifest": {
+      "Description": "Paste this identifier-only JSON into GovEngine after the stack is created.",
+      "Value": {
+        "Fn::Sub": "{\"provider\":\"aws\",\"principal\":\"${CollectorTaskRole.Arn}\",\"accountScope\":\"${AWS::AccountId}\",\"displayName\":\"${DisplayName}\"}"
+      }
+    },
+    "RunNowUrl": {
+      "Description": "Open the ECS Run Task page for this collector cluster.",
+      "Value": {
+        "Fn::Sub": "https://${AWS::Region}.console.aws.amazon.com/ecs/v2/clusters/${CollectorCluster}/run-task?region=${AWS::Region}"
+      }
+    },
+    "LogsUrl": {
+      "Description": "Open this collector's CloudWatch log group.",
+      "Value": {
+        "Fn::Sub": "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Fgovengine$252Fcloud-collector$252F${AWS::StackName}"
+      }
+    }
+  }
+}

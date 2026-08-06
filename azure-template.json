@@ -1,0 +1,403 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "13937064929060773342"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[deployment().location]",
+      "metadata": {
+        "description": "Region for the collector job"
+      }
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "defaultValue": "govengine-collector",
+      "metadata": {
+        "description": "Resource group created for the collector"
+      }
+    },
+    "displayName": {
+      "type": "string",
+      "defaultValue": "Azure Production",
+      "minLength": 1,
+      "maxLength": 128,
+      "metadata": {
+        "description": "Connection name shown in GovEngine"
+      }
+    },
+    "govEngineUrl": {
+      "type": "string",
+      "defaultValue": "https://govengine.ai",
+      "minLength": 9,
+      "maxLength": 2048,
+      "metadata": {
+        "description": "GovEngine HTTPS base URL"
+      }
+    },
+    "govEngineAudience": {
+      "type": "string",
+      "defaultValue": "https://govengine.ai/cloud-collector",
+      "minLength": 9,
+      "maxLength": 2048,
+      "metadata": {
+        "description": "HTTPS audience configured as GovEngine CLOUD_IDENTITY_AUDIENCE"
+      }
+    }
+  },
+  "variables": {
+    "govEngineUrlParts": "[parseUri(parameters('govEngineUrl'))]",
+    "govEngineAudienceParts": "[parseUri(parameters('govEngineAudience'))]",
+    "hostnameAlphanumeric": "abcdefghijklmnopqrstuvwxyz0123456789",
+    "hostnameCharacters": "[format('{0}-', variables('hostnameAlphanumeric'))]",
+    "invalidGovEngineUrlHostCharacters": "[filter(range(0, length(variables('govEngineUrlParts').host)), lambda('index', not(contains(format('{0}.', variables('hostnameCharacters')), substring(toLower(variables('govEngineUrlParts').host), lambdaVariables('index'), 1)))))]",
+    "invalidGovEngineAudienceHostCharacters": "[filter(range(0, length(variables('govEngineAudienceParts').host)), lambda('index', not(contains(format('{0}.', variables('hostnameCharacters')), substring(toLower(variables('govEngineAudienceParts').host), lambdaVariables('index'), 1)))))]",
+    "invalidGovEngineUrlHostLabels": "[filter(split(toLower(variables('govEngineUrlParts').host), '.'), lambda('label', or(or(or(empty(lambdaVariables('label')), greater(length(lambdaVariables('label')), 63)), not(contains(variables('hostnameAlphanumeric'), first(lambdaVariables('label'))))), not(contains(variables('hostnameAlphanumeric'), last(lambdaVariables('label')))))))]",
+    "invalidGovEngineAudienceHostLabels": "[filter(split(toLower(variables('govEngineAudienceParts').host), '.'), lambda('label', or(or(or(empty(lambdaVariables('label')), greater(length(lambdaVariables('label')), 63)), not(contains(variables('hostnameAlphanumeric'), first(lambdaVariables('label'))))), not(contains(variables('hostnameAlphanumeric'), last(lambdaVariables('label')))))))]",
+    "validGovEngineUrl": "[and(and(and(and(and(and(equals(variables('govEngineUrlParts').scheme, 'https'), not(empty(variables('govEngineUrlParts').host))), equals(length(variables('invalidGovEngineUrlHostCharacters')), 0)), equals(length(variables('invalidGovEngineUrlHostLabels')), 0)), empty(variables('govEngineUrlParts').query)), or(empty(variables('govEngineUrlParts').path), equals(variables('govEngineUrlParts').path, '/'))), equals(buildUri(variables('govEngineUrlParts')), parameters('govEngineUrl')))]",
+    "validGovEngineAudience": "[and(and(and(and(and(equals(variables('govEngineAudienceParts').scheme, 'https'), not(empty(variables('govEngineAudienceParts').host))), equals(length(variables('invalidGovEngineAudienceHostCharacters')), 0)), equals(length(variables('invalidGovEngineAudienceHostLabels')), 0)), empty(variables('govEngineAudienceParts').query)), equals(buildUri(variables('govEngineAudienceParts')), parameters('govEngineAudience')))]",
+    "validatedGovEngineUrl": "[if(variables('validGovEngineUrl'), parameters('govEngineUrl'), fail('govEngineUrl must be a credential-free HTTPS origin with no path, query, or fragment'))]",
+    "validatedGovEngineAudience": "[if(variables('validGovEngineAudience'), parameters('govEngineAudience'), fail('govEngineAudience must be the credential-free HTTPS CLOUD_IDENTITY_AUDIENCE value'))]",
+    "collectorImage": "ghcr.io/braventllc/govengine-collector@sha256:3af66a69d92683f1b018ab30f6f5c0ec72b2064b919f4d260e07a2725b30f751",
+    "collectorRoleName": "[format('GovEngine Collector (read-only) - {0}', subscription().subscriptionId)]",
+    "collectorActions": [
+      "Microsoft.Compute/virtualMachines/read",
+      "Microsoft.Compute/virtualMachines/instanceView/read",
+      "Microsoft.Compute/locations/vmSizes/read",
+      "Microsoft.Compute/disks/read",
+      "Microsoft.Insights/metrics/read",
+      "Microsoft.Insights/metricDefinitions/read",
+      "Microsoft.CostManagement/query/action",
+      "Microsoft.Advisor/recommendations/read",
+      "Microsoft.Resources/subscriptions/read",
+      "Microsoft.Resources/subscriptions/resourceGroups/read"
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('resourceGroupName')]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.Authorization/roleDefinitions",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, 'GovEngine Collector (read-only)')]",
+      "properties": {
+        "roleName": "[variables('collectorRoleName')]",
+        "description": "Read-only inventory, utilization, cost, and recommendation access for the GovEngine collector.",
+        "type": "CustomRole",
+        "permissions": [
+          {
+            "actions": "[variables('collectorActions')]",
+            "notActions": [],
+            "dataActions": [],
+            "notDataActions": []
+          }
+        ],
+        "assignableScopes": [
+          "[subscription().id]"
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(subscription().id, subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName')), subscriptionResourceId('Microsoft.Authorization/roleDefinitions', guid(subscription().id, 'GovEngine Collector (read-only)')))]",
+      "properties": {
+        "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity'), '2025-04-01').outputs.principalId.value]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', guid(subscription().id, 'GovEngine Collector (read-only)'))]"
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]",
+        "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', guid(subscription().id, 'GovEngine Collector (read-only)'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "govengine-collector-identity",
+      "resourceGroup": "[parameters('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "6410687328571019307"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "govengine-collector",
+              "location": "[parameters('location')]"
+            }
+          ],
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'govengine-collector')]"
+            },
+            "clientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'govengine-collector'), '2023-01-31').clientId]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'govengine-collector'), '2023-01-31').principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "govengine-collector-resources",
+      "resourceGroup": "[parameters('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "collectorImage": {
+            "value": "[variables('collectorImage')]"
+          },
+          "govEngineUrl": {
+            "value": "[variables('validatedGovEngineUrl')]"
+          },
+          "govEngineAudience": {
+            "value": "[variables('validatedGovEngineAudience')]"
+          },
+          "identityClientId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity'), '2025-04-01').outputs.clientId.value]"
+          },
+          "identityId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity'), '2025-04-01').outputs.id.value]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "17120415064066282449"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "subscriptionId": {
+              "type": "string"
+            },
+            "govEngineUrl": {
+              "type": "string"
+            },
+            "govEngineAudience": {
+              "type": "string"
+            },
+            "collectorImage": {
+              "type": "string"
+            },
+            "identityId": {
+              "type": "string"
+            },
+            "identityClientId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "resourcePrefix": "govengine-collector"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}-logs', variables('resourcePrefix'))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "features": {
+                  "enableLogAccessUsingOnlyResourcePermissions": true
+                },
+                "retentionInDays": 30,
+                "sku": {
+                  "name": "PerGB2018"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-environment', variables('resourcePrefix'))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "appLogsConfiguration": {
+                  "destination": "azure-monitor"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-environment', variables('resourcePrefix')))]",
+              "name": "[format('{0}-logs', variables('resourcePrefix'))]",
+              "properties": {
+                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', variables('resourcePrefix')))]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', format('{0}-environment', variables('resourcePrefix')))]",
+                "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', variables('resourcePrefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/jobs",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('resourcePrefix')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('identityId'))]": {}
+                }
+              },
+              "properties": {
+                "environmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-environment', variables('resourcePrefix')))]",
+                "configuration": {
+                  "triggerType": "Schedule",
+                  "scheduleTriggerConfig": {
+                    "cronExpression": "0 * * * *",
+                    "parallelism": 1,
+                    "replicaCompletionCount": 1
+                  },
+                  "replicaRetryLimit": 1,
+                  "replicaTimeout": 1800
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "govengine-collector",
+                      "image": "[parameters('collectorImage')]",
+                      "args": [
+                        "--once"
+                      ],
+                      "env": [
+                        {
+                          "name": "GOVENGINE_URL",
+                          "value": "[parameters('govEngineUrl')]"
+                        },
+                        {
+                          "name": "GOVENGINE_AUDIENCE",
+                          "value": "[parameters('govEngineAudience')]"
+                        },
+                        {
+                          "name": "GOVENGINE_CLOUD_PROVIDER",
+                          "value": "azure"
+                        },
+                        {
+                          "name": "AZURE_SUBSCRIPTION_ID",
+                          "value": "[parameters('subscriptionId')]"
+                        },
+                        {
+                          "name": "AZURE_CLIENT_ID",
+                          "value": "[parameters('identityClientId')]"
+                        }
+                      ],
+                      "resources": {
+                        "cpu": "[json('0.25')]",
+                        "memory": "0.5Gi"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', format('{0}-environment', variables('resourcePrefix')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "runNowUrl": {
+              "type": "string",
+              "value": "[format('https://portal.azure.com/#@{0}/resource{1}/executions', tenant().tenantId, resourceId('Microsoft.App/jobs', variables('resourcePrefix')))]"
+            },
+            "logsUrl": {
+              "type": "string",
+              "value": "[format('https://portal.azure.com/#@{0}/resource{1}/logs', tenant().tenantId, resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', variables('resourcePrefix'))))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName'))]",
+        "[subscriptionResourceId('Microsoft.Authorization/roleAssignments', guid(subscription().id, subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('resourceGroupName')), subscriptionResourceId('Microsoft.Authorization/roleDefinitions', guid(subscription().id, 'GovEngine Collector (read-only)'))))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "registrationManifest": {
+      "type": "string",
+      "value": "[string(createObject('provider', 'azure', 'principal', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-identity'), '2025-04-01').outputs.principalId.value, 'accountScope', subscription().subscriptionId, 'displayName', parameters('displayName'), 'tenantId', tenant().tenantId))]"
+    },
+    "runNowUrl": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-resources'), '2025-04-01').outputs.runNowUrl.value]"
+    },
+    "logsUrl": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('resourceGroupName')), 'Microsoft.Resources/deployments', 'govengine-collector-resources'), '2025-04-01').outputs.logsUrl.value]"
+    }
+  }
+}
