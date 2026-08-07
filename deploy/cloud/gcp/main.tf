@@ -1,6 +1,7 @@
 locals {
   required_services = toset([
     "bigquery.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "cloudscheduler.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
