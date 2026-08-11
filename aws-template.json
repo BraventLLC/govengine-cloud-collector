@@ -340,7 +340,7 @@
         "ContainerDefinitions": [
           {
             "Name": "govengine-collector",
-            "Image": "ghcr.io/braventllc/govengine-collector@sha256:018c221117f650decfaefa6c1cce9a4bf938779124616a4c0964541f6c72fe7c",
+            "Image": "ghcr.io/braventllc/govengine-collector@sha256:504c1c72def11d33f47e620e00c69fee44154a8fd42a68a117269f74582f61d8",
             "Essential": true,
             "User": "65532",
             "ReadonlyRootFilesystem": true,

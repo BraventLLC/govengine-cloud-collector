@@ -1,11 +1,11 @@
 {
-  "version": "1.0.3",
-  "imageRef": "ghcr.io/braventllc/govengine-collector@sha256:018c221117f650decfaefa6c1cce9a4bf938779124616a4c0964541f6c72fe7c",
+  "version": "1.0.4",
+  "imageRef": "ghcr.io/braventllc/govengine-collector@sha256:504c1c72def11d33f47e620e00c69fee44154a8fd42a68a117269f74582f61d8",
   "awsTemplateUrl": null,
-  "tag": "cloud-collector-v1.0.3",
-  "sourceSha": "4ed0640b50f625518a6bb40c2fb6bd6ec5883e90",
+  "tag": "cloud-collector-v1.0.4",
+  "sourceSha": "6e7629d6f1743ac8298d776c7777080a3d1f6390",
   "checksums": {
-    "aws-template.json": "94eb6577c9006a52698205d81a4b72c5b9ed0e64b89ff0977999dde8194cb373",
-    "azure-template.json": "e3f893cf93c3f4b8bbbcfdf3bed04d09ada64357a0c7ee8536cb06fcb9dc4fdd"
+    "aws-template.json": "e2f39f414557b7dbdfb60b67097d896f7f025203ab3a77c8e795d2f9f0aae183",
+    "azure-template.json": "766fee920ffdbd5369d1a3ae925e6ad2bcaa9ce9373ad90ab4a2a87b9f50f608"
   }
 }
